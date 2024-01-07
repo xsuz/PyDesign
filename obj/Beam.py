@@ -6,6 +6,7 @@
 
 from astropy.units import Quantity
 import numpy as np
+import scipy
 import scipy.constants as consts
 import pandas as pd
 from utils import unit  as u
@@ -158,6 +159,7 @@ class Beam:
         self.length=sum([beam_info.length for beam_info in info]).decompose()
         self.s=np.linspace(0,self.length,N)
         self.dihedral=np.zeros((N,3))*Quantity(0,"rad") # 初期上反
+        self.diamiter=Quantity(np.zeros(self.N),"m")
         self.read(info,N)
         
     def read(self,info:list[BeamInfo],N:int=100):
@@ -234,8 +236,9 @@ class Beam:
         self.s=s
         self.ds=span/N
         self.dihedral=dihedral
+        self.diamiter=diamiter
     
-    def deflect(self,f_local:np.ndarray[Quantity],r_local:np.ndarray[Quantity],U_base=np.eye(3),epochs=10,ALPHA=0.8,eps=1e-3):
+    def deflect(self,f_local:np.ndarray[Quantity],r_local:np.ndarray[Quantity],U_base=np.eye(3),epochs=10,ALPHA=0.8,eps=1e-3)->dict[str,np.ndarray[np.float64]]:
         """桁の変形を計算する
 
         Args:
@@ -278,46 +281,51 @@ class Beam:
         U_xi=np.zeros((self.N,3,3))
 
         # 初期上反を考慮した回転行列の設定
-        euler=np.zeros(3)*u.rad
+        euler=np.zeros((self.N,3))*u.rad
         for i in range(self.N):
-            euler+=self.dihedral[i].to("rad")
-            U_xi[i+1:]=(Rx(euler[0])@Ry(euler[1])@Rz(euler[2])).T
-        r=np.cumsum(U_xi[:,0]*self.ds,axis=0)
+            euler[i:]+=self.dihedral[i].to("rad")
+            U_xi[i]=(Rx(euler[i,0])@Ry(euler[i,1])@Rz(euler[i,2])).T
+        r=np.cumsum(U_xi[:,:,0]*self.ds,axis=0)
+        
+        F_sum=sum(f_local)
+        F_local=np.array([np.interp(np.arange(self.N)*len(f_local_i)/self.N,np.arange(len(f_local_i)),f_local_i) for f_local_i in f_local.T]).T
+        F_local=f_local*F_sum/(sum(f_local)+1e-20*u.N)
+        r_local=np.array([np.interp(np.arange(self.N),np.arange(len(r_local_i)),r_local_i) for r_local_i in r_local.T]).T*u.m
 
         # 繰り返し計算
         with tqdm(range(epochs)) as pbar:
             for _ in pbar:
                 f=np.zeros((self.N,3))*u.N
-                euler=np.zeros(3)*u.rad
+                euler=np.zeros((self.N,3))*u.rad
                 for i in range(self.N):
-                    f[i]=U_xi[i]@f_local[i] # 局所座標系ξηζ系で与えられた力をxyz系に変換
-                    f[i]+=U_base.T[2]*self.weight[i]*consts.g *u.m/u.s**2 # 桁の重量を考慮
+                    f[i]=U_xi[i]@F_local[i] # 局所座標系ξηζ系で与えられた力をxyz系に変換
+                    f[i]+=U_base[2]*self.weight[i]*consts.g *u.m/u.s**2 # 桁の重量を考慮
                 f.decompose()
                 for i in range(self.N):
                     kappa=np.zeros((self.N,3))/u.m
                     for j in range(i,self.N):
                         T=np.cross(r[j]+U_xi[j]@r_local[j]-r[i],f[j]) # 曲げモーメント
                         # 力のつり合いの方程式は
-                        # \mathbf{M}+\mathbf{EI}\mathbf{\kappa}=\mathbf{0}
-                        kappa+=-self.G[i]@(T@U_xi[i])
+                        # \mathbf{EI}\mathbf{\kappa}=\mathbf{M}
+                        kappa+=self.G[i]@(T@U_xi[i])
                     # 回転ベクトル→Euler角の変換
                     deuler=np.array([
-                        [1,     np.sin(euler[0])*np.tan(euler[1]),   np.cos(euler[0])*np.tan(euler[1])],
-                        [0,     np.cos(euler[0]),                    -np.sin(euler[0])],
-                        [0,     np.sin(euler[0])/np.cos(euler[1]),   np.cos(euler[0])/np.cos(euler[1])]
+                        [1,     np.sin(euler[i,0])*np.tan(euler[i,1]),   np.cos(euler[i,0])*np.tan(euler[i,1])],
+                        [0,     np.cos(euler[i,0]),                    -np.sin(euler[i,0])],
+                        [0,     np.sin(euler[i,0])/np.cos(euler[i,1]),   np.cos(euler[i,0])/np.cos(euler[i,1])]
                     ])@kappa[i]*self.ds*u.rad
-                    euler+=deuler+self.dihedral[i]
+                    euler[i:]+=deuler+self.dihedral[i]
                     # zyxEuler角で基底ベクトルを構成
-                    U_xi[i+1:]=(Rx(euler[0])@Ry(euler[1])@Rz(euler[2])).T
-                tip_error=np.linalg.norm(r[-1]-np.cumsum(U_xi[:,0]*self.ds,axis=0)[-1])
+                    U_xi[i+1:]=(Rx(euler[i,0])@Ry(euler[i,1])@Rz(euler[i,2])).T
+                tip_error=np.linalg.norm(r[-1]-np.cumsum(U_xi[:,:,0]*self.ds,axis=0)[-1])
                 pbar.set_postfix({"error":tip_error})
                 # 収束条件を満たしたら終了
                 if tip_error<eps*u.m:
                     break
                 # 更新率の応じて変化量を設定
-                r=r*(1-ALPHA)+ALPHA*np.cumsum(U_xi[:,0]*self.ds,axis=0)
+                r=r*(1-ALPHA)+ALPHA*np.cumsum(U_xi[:,:,0]*self.ds,axis=0)
         # 固定端の座標系を基準に戻す
         for i in range(self.N):
             r[i]=U_base@r[i]
-            U_xi[i]=U_xi[i]@U_base
-        return r,U_xi
+            U_xi[i]=U_base@U_xi[i]
+        return r,U_xi,euler
