@@ -15,6 +15,7 @@ git clone https://github.com/xsuz/PYDesign.git
 Then, install the package:
 
 ```bash
+pip install -r requirements.txt
 pip install xfoil-py
 ```
 

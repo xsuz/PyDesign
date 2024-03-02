@@ -1,5 +1,6 @@
 
 from obj.Beam import Sheet,PLY,BeamInfo,Beam
+from analysis.deflect import deflect
 import utils.unit as u
 from astropy.units import Quantity
 import pandas as pd
@@ -27,22 +28,24 @@ plt.style.use('dark_background')
 ax:Axes=plt.axes(projection='3d')
 
 # right wing
-r,U_xi,euler=beam.deflect(f*u.N,0*np.ones((320,3))*u.m,
+result=deflect(beam,f*u.N,0*np.ones((320,3))*u.m,
                     np.array([[0,1,0], # e_xi
                               [1,0,0], # e_eta
                               [0,0,-1] # e_zeta
                               ]).T)
+r,U_xi,euler=result["r"],result["U_xi"],result["euler"]
 
 ax.plot(r[:,0],r[:,1],r[:,2],color='white',linewidth=3)
 ax.quiver3D(r[:,0],r[:,1],r[:,2],U_xi[:,0,1],U_xi[:,1,1],U_xi[:,2,1],length=3,color='green',alpha=0.5,arrow_length_ratio=0,linewidths=0.5,normalize=True,label=r"$\eta_r$")
 ax.quiver3D(r[:,0],r[:,1],r[:,2],U_xi[:,0,2],U_xi[:,1,2],U_xi[:,2,2],length=3,color='blue' ,alpha=0.5,arrow_length_ratio=0,linewidths=0.5,normalize=True,label=r"$\zeta_r$")
 
 # left wing
-r,U_xi,euler=beam.deflect(f*u.N,0*np.ones((320,3))*u.m,
+result=deflect(beam,f*u.N,0*np.ones((320,3))*u.m,
                     np.array([[0,-1,0], # e_xi
-                              [1, 0,0], # e_eta
-                              [0, 0,-1] # e_zeta
+                              [1,0,0], # e_eta
+                              [0,0,-1] # e_zeta
                               ]).T)
+r,U_xi,euler=result["r"],result["U_xi"],result["euler"]
 
 ax.plot(r[:,0],r[:,1],r[:,2],color='white',linewidth=3)
 ax.quiver3D(r[:,0],r[:,1],r[:,2],U_xi[:,0,1],U_xi[:,1,1],U_xi[:,2,1],length=3,color='orange',alpha=0.5,arrow_length_ratio=0,linewidths=0.5,normalize=True,label=r"$\eta_l$")
